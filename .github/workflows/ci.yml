@@ -1,31 +1,42 @@
-name: CI
+name: Triggers
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   push:
     branches: [main]
+  pull_request:
+    types: [opened, synchronize]
+  schedule:
+    - cron: '*/30 * * * *'        # every 30 min — see Step 4
   workflow_dispatch:
-
-permissions:
-  contents: read
-
-env:
-  NODE_VERSION: '20'
+    inputs:
+      target:
+        description: Where to target
+        type: choice
+        options: [dev, staging, production]
+        default: dev
+      dry_run:
+        description: Dry run only
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [build-requested]
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out the repository
-        uses: actions/checkout@v4
-      - name: Print the event that started this run
-        run: echo "event=${{ github.event_name }} ref=${{ github.ref }} sha=${{ github.sha }}"
-      - name: Install and build
+      - name: What fired this run?
         run: |
-          echo "Using Node ${{ env.NODE_VERSION }} on ${{ runner.os }}"
-          npm init -y >/dev/null 2>&1 && npm pkg set scripts.build="echo build-ok"
-          npm run build
-      - name: Wrote a file last run?
+          echo "event        = ${{ github.event_name }}"
+          echo "ref          = ${{ github.ref }}"
+          echo "head_ref     = ${{ github.head_ref }}"
+          echo "base_ref     = ${{ github.base_ref }}"
+          echo "sha          = ${{ github.sha }}"
+          echo "actor        = ${{ github.actor }}"
+      - name: workflow_dispatch inputs
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          test -f /tmp/leftover && echo "LEFTOVER EXISTS" || echo "fresh runner — no leftover"
-          touch /tmp/leftover
+          echo "target  = ${{ github.event.inputs.target }}"
+          echo "dry_run = ${{ github.event.inputs.dry_run }}"
+      - name: repository_dispatch payload
+        if: github.event_name == 'repository_dispatch'
+        run: echo "client payload = ${{ toJSON(github.event.client_payload) }}"
