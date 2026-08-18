@@ -4,8 +4,8 @@ on:
     branches: [main]
   pull_request:
     types: [opened, synchronize]
-  schedule:
-    - cron: '*/30 * * * *'        # every 30 min — see Step 4
+  # schedule:
+  #   - cron: '*/30 * * * *'        # every 30 min — see Step 4
   workflow_dispatch:
     inputs:
       target:
