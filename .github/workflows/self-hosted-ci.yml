@@ -1,4 +1,4 @@
-name: Checkout — Build & Push
+name: Checkout — Build & Push - Self Hosted
 on:
   push:
     branches: [main]
