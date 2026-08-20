@@ -9,14 +9,14 @@ permissions:
 
 jobs:
   lint:
-    runs-on: self-hosted
+    runs-on: [self-hosted, training]
     steps:
       - uses: actions/checkout@v4
       - run: echo "linting… OK"        # stand-in for a real linter (out of scope)
 
   test:
     needs: lint                        # waits for lint
-    runs-on: self-hosted
+    runs-on: [self-hosted, training]
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +30,7 @@ jobs:
 
   build:
     needs: lint                        # independent of test → runs parallel with it
-    runs-on: self-hosted
+    runs-on: [self-hosted, training]
     steps:
       - uses: actions/checkout@v4
       - run: echo "building… OK" > build.txt
@@ -51,7 +51,7 @@ jobs:
 
   deploy:
     needs: [test, build]               # waits for both (and transitively lint)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, training]
     environment: demo
     steps:
       - uses: actions/download-artifact@v4
