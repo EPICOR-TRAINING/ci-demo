@@ -9,7 +9,7 @@ on:
 
 jobs:
   shared-ci:
-    uses: ./.github/workflows/shared-ci.yml
+    uses: .github/workflows/shared-ci.yml
     with:
       service: checkout
       dockerfile: services/checkout/Dockerfile
