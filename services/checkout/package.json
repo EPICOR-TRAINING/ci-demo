@@ -4,5 +4,9 @@
   "private": true,
   "scripts": {
     "test": "node -e \"console.log('checkout tests OK')\""
+  },
+  "dependencies": {
+    "react-dom": "19.2.8",
+    "react": "19.2.8"
   }
 }
