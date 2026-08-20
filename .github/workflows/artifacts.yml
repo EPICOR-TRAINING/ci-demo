@@ -1,0 +1,59 @@
+name: Artifacts & Caching
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: services/checkout/package-lock.json
+      - name: Install
+        run: npm ci --prefix services/checkout
+      - name: Compute version
+        id: version
+        run: echo "version=v$(node -p "require('./services/checkout/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: |
+          mkdir -p services/checkout/dist
+          echo "checkout build ${{ steps.version.outputs.version }}" > services/checkout/dist/out.txt
+      - name: Upload dist as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-dist
+          path: services/checkout/dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: services/checkout/package-lock.json
+      - run: npm ci --prefix services/checkout
+      - uses: actions/download-artifact@v4
+        with:
+          name: checkout-dist
+          path: services/checkout/dist/
+      - name: Verify the handed-off build
+        run: cat services/checkout/dist/out.txt
+      - name: Version travelled via job output
+        run: echo "deploying ${{ needs.build.outputs.version }}"
