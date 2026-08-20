@@ -1,0 +1,23 @@
+name: Cache manual
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache ~/.npm
+        id: npm-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('services/checkout/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+      - name: Install (skips on exact hit)
+        run: npm ci --prefix services/checkout
+      - name: Cache result
+        run: echo "cache-hit=${{ steps.npm-cache.outputs.cache-hit }}"
