@@ -1,0 +1,189 @@
+name: Checkout — E2E (Test → Build → ACR → GitOps)
+
+on:
+  push:
+    branches: [main]
+    paths: ["services/checkout/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SERVICE: checkout
+  WORKDIR: services/checkout
+  ACR_NAME: ${{ secrets.ACR_NAME }}            # e.g. mycompanyacr (without .azurecr.io)
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
+  IMAGE_REPO: checkout-service
+  GITOPS_REPO: ${{ secrets.GITOPS_REPO }}      # e.g. my-org/gitops-manifests
+  GITOPS_BRANCH: main
+  GITOPS_IMAGE_PATH: apps/checkout/deployment.yaml
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 1) TEST — install deps & run unit tests
+  # ─────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/checkout
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: services/checkout/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  # ─────────────────────────────────────────────────────────────
+  # 2) BUILD — verify app builds (syntax / bundling)
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/checkout
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: services/checkout/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (syntax check)
+        run: node --check app.js
+
+      - name: Read service version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+  # ─────────────────────────────────────────────────────────────
+  # 3) DOCKER — build image and push to Azure Container Registry
+  # ─────────────────────────────────────────────────────────────
+  docker:
+    name: Docker Build & Push (ACR)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      image_ref: ${{ steps.tag.outputs.image_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          IMAGE_TAG="${{ needs.build.outputs.version }}-${SHORT_SHA}"
+          IMAGE_REF="${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPO }}:${IMAGE_TAG}"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "Image will be: ${IMAGE_REF}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/checkout
+          file: services/checkout/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.tag.outputs.image_ref }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────────
+  # 4) GITOPS — update image tag in the manifest repo
+  # ─────────────────────────────────────────────────────────────
+  gitops:
+    name: Update GitOps Repo
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          ref: ${{ env.GITOPS_BRANCH }}
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+
+      - name: Bump image tag in manifest
+        working-directory: gitops
+        env:
+          IMAGE_REF: ${{ needs.docker.outputs.image_ref }}
+          MANIFEST: ${{ env.GITOPS_IMAGE_PATH }}
+        run: |
+          set -euo pipefail
+          echo "Updating ${MANIFEST} → ${IMAGE_REF}"
+          # Replace any line like:  image: <acr>.azurecr.io/checkout-service:<tag>
+          sed -i -E "s|image:\s*[^[:space:]]*/${{ env.IMAGE_REPO }}:.*|image: ${IMAGE_REF}|g" "${MANIFEST}"
+          echo "----- Updated manifest -----"
+          grep -n "image:" "${MANIFEST}" || true
+
+      - name: Commit and push change
+        working-directory: gitops
+        env:
+          IMAGE_REF: ${{ needs.docker.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No manifest changes — skipping commit."
+            exit 0
+          fi
+          git add "${{ env.GITOPS_IMAGE_PATH }}"
+          git commit -m "chore(checkout): bump image to ${IMAGE_REF}
+
+          Source: ${{ github.repository }}@${{ github.sha }}
+          Run:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          git push origin "${{ env.GITOPS_BRANCH }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Checkout E2E — Summary"
+            echo ""
+            echo "| Stage  | Result |"
+            echo "|--------|--------|"
+            echo "| Test   | passed |"
+            echo "| Build  | passed |"
+            echo "| Image  | \`${{ needs.docker.outputs.image_ref }}\` |"
+            echo "| GitOps | \`${{ env.GITOPS_REPO }}\` → \`${{ env.GITOPS_IMAGE_PATH }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
