@@ -16,10 +16,13 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          # Setup 12 §6: trust-only smoke test — the SP has no RBAC yet, so
+          # skip subscription enumeration. Remove this once AcrPush lands.
+          allow-no-subscriptions: true
 
       - name: Prove the token exchange
         run: |
-          az account show -o json
-          echo "--- signed-in identity ---"
-          az ad signed-in-user show --query "{id:id,upn:userPrincipalName,displayName:displayName}" -o json || \
-            az account show --query "user" -o json
+          echo "--- account (tenant only until RBAC is granted) ---"
+          az account show -o json || true
+          echo "--- signed-in service principal ---"
+          az account list -o json
