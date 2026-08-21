@@ -1,0 +1,25 @@
+name: oidc-smoke-test
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (keyless via OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prove the token exchange
+        run: |
+          az account show -o json
+          echo "--- signed-in identity ---"
+          az ad signed-in-user show --query "{id:id,upn:userPrincipalName,displayName:displayName}" -o json || \
+            az account show --query "user" -o json
